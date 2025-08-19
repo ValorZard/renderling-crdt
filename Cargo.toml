@@ -1,0 +1,11 @@
+[package]
+name = "renderling-crdt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+env_logger = "0.11.8"
+fastrand = "2.3.0"
+log = "0.4.27"
+renderling = {git = "https://github.com/schell/renderling.git", rev = "5eea6011a552d39aecc264bbfe2e382986a4dcf7"}
+winit = "0.30.12"
