@@ -1,6 +1,6 @@
 //! An example app showing (and verifying) how frustum culling works in
 //! `renderling`.
-use std::{any::Any, sync::Arc, time::Instant};
+use std::{any::Any, sync::Arc, time::Instant, vec};
 mod camera;
 mod utils;
 use crate::{camera::CameraController, utils::*};
@@ -59,7 +59,8 @@ struct CullingExample {
     instant: Instant,
     delta: std::time::Duration,
     player_id: String,
-    player_position: Vec3,
+    player_positions: Vec<Vec3>,
+    local_player_position: Vec3,
 }
 
 impl CullingExample {
@@ -124,7 +125,7 @@ impl CullingExample {
         frustum_camera: &FrustumCamera,
         material_outside: &Hybrid<Material>,
         material_overlapping: &Hybrid<Material>,
-        player_position: &Vec3,
+        player_positions: &Vec<Vec3>,
     ) -> Box<dyn Any> {
         log::info!("generating aabbs with seed {seed}");
         fastrand::seed(seed);
@@ -158,17 +159,19 @@ impl CullingExample {
             })
             .collect::<Vec<_>>();
 
-        let player = Self::make_render_aabb(
-            Quat::IDENTITY,
-            *player_position,
-            Vec3::new(10., 10.0, 10.),
-            stage,
-            frustum_camera,
-            material_outside,
-            material_overlapping,
-        );
+        for player_position in player_positions {
+            let player = Self::make_render_aabb(
+                Quat::IDENTITY,
+                *player_position,
+                Vec3::new(10., 10.0, 10.),
+                stage,
+                frustum_camera,
+                material_outside,
+                material_overlapping,
+            );
 
-        boxes.push(player);
+            boxes.push(player);
+        }
 
         Box::new(boxes)
     }
@@ -205,7 +208,7 @@ impl ApplicationHandler for CullingExample {
                         &self.frustum_camera,
                         &self.material_aabb_outside,
                         &self.material_aabb_overlapping,
-                        &self.player_position,
+                        &get_players(&doc),
                     ));
                     self.next_k += 1;
                     print_document(&doc);
@@ -213,16 +216,16 @@ impl ApplicationHandler for CullingExample {
                 }
                 let speed = 50.;
                 if c.as_str() == "w" {
-                    self.player_position.z -= speed * self.delta.as_secs_f32();
+                    self.local_player_position.z -= speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "s" {
-                    self.player_position.z += speed * self.delta.as_secs_f32();
+                    self.local_player_position.z += speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "a" {
-                    self.player_position.x -= speed * self.delta.as_secs_f32();
+                    self.local_player_position.x -= speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "d" {
-                    self.player_position.x += speed * self.delta.as_secs_f32();
+                    self.local_player_position.x += speed * self.delta.as_secs_f32();
                 }
 
                 let _ = doc
@@ -231,7 +234,7 @@ impl ApplicationHandler for CullingExample {
                             tx.put(
                                 automerge::ROOT,
                                 format!("player_{}", self.player_id),
-                                format!("{:?}", self.player_position),
+                                vec3_to_string(&self.local_player_position),
                             )
                         })
                     })
@@ -320,14 +323,14 @@ impl TestAppHandler for CullingExample {
             ..Default::default()
         });
         let app_camera = AppCamera(stage.new_camera(Camera::default()));
-        let player_position = Vec3::new(0.0, 0.0, 5.0);
+        let local_player_position = Vec3::new(0.0, 0.0, 5.0);
         resources.push(Self::make_aabbs(
             seed,
             &stage,
             &frustum_camera,
             &material_aabb_outside,
             &material_aabb_overlapping,
-            &player_position,
+            &vec![local_player_position],
         ));
         seed += 1;
 
@@ -358,7 +361,7 @@ impl TestAppHandler for CullingExample {
                     tx.put(
                         automerge::ROOT,
                         format!("player_{player_id}"),
-                        format!("{player_position}"),
+                        vec3_to_string(&local_player_position),
                     )
                 })
             })
@@ -388,7 +391,8 @@ impl TestAppHandler for CullingExample {
             instant: Instant::now(),
             delta: std::time::Duration::ZERO,
             player_id,
-            player_position,
+            player_positions: vec![],
+            local_player_position,
         }
     }
 

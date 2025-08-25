@@ -3,10 +3,10 @@
 use anyhow::Context as anyContext;
 use automerge::ReadDoc;
 use n0_future::future::block_on;
-use renderling::Context;
+use renderling::{Context, math::Vec3};
 use renderling_crdt::IrohRepo;
 use samod::DocHandle;
-use std::{any::Any, str::FromStr, sync::Arc};
+use std::{any::Any, str::FromStr, sync::Arc, vec};
 use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
@@ -47,6 +47,39 @@ pub fn print_document(doc: &DocHandle) {
     })
     .unwrap();
 }
+
+pub fn vec3_to_string(vec: &Vec3) -> String {
+    format!("{},{},{}", vec.x, vec.y, vec.z)
+}
+
+pub fn string_to_vec3(s: &str) -> Vec3 {
+    let mut parts = s.split(',');
+    let x = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    let y = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    let z = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    Vec3::new(x, y, z)
+}
+
+pub fn get_players(doc: &DocHandle) -> Vec<Vec3> {
+    let mut players = Vec::new();
+    doc.with_document(|doc| {
+        for key in doc.keys(automerge::ROOT) {
+            let (value, _) = doc
+                .get(automerge::ROOT, &key)
+                .unwrap()
+                .expect("missing value");
+            if key.starts_with("player_") {
+                let value_s = value.into_string().unwrap();
+                let vec3 = string_to_vec3(&value_s);
+                players.push(vec3);
+            }
+        }
+        anyhow::Ok(())
+    })
+    .unwrap();
+    players
+}
+
 pub type RouterContainer = Arc<std::sync::Mutex<iroh::protocol::Router>>;
 pub type ProtocolContainer = Arc<tokio::sync::Mutex<IrohRepo>>;
 pub trait TestAppHandler: winit::application::ApplicationHandler {
