@@ -441,6 +441,8 @@ async fn main() -> anyhow::Result<()> {
         println!("Connected to {addr}");
     }
 
+    let mut document_id = String::new();
+
     match args.command {
         Commands::Create { key, value } => {
             let mut doc = Automerge::new();
@@ -448,8 +450,10 @@ async fn main() -> anyhow::Result<()> {
                 .map_err(debug_err)?;
             let doc = proto.repo().create(doc).await?;
             println!("Created document {}", doc.document_id());
+            document_id = doc.document_id().to_string();
         }
         Commands::Upsert { doc, key, value } => {
+            document_id = doc.clone();
             let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
             let doc = proto
                 .repo()
@@ -461,6 +465,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Updated document");
         }
         Commands::Delete { doc, key } => {
+            document_id = doc.clone();
             let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
             let doc = proto
                 .repo()
@@ -472,6 +477,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Key deleted!");
         }
         Commands::Print { doc } => {
+            document_id = doc.clone();
             let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
             let doc = proto
                 .repo()
@@ -487,6 +493,7 @@ async fn main() -> anyhow::Result<()> {
             })?;
         }
         Commands::Subscribe { doc } => {
+            document_id = doc.clone();
             let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
             let doc = proto
                 .repo()
@@ -544,13 +551,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    println!("Waiting for Ctrl+C");
+    println!("Start TestApp");
 
-    TestApp::<CullingExample>::new(winit::dpi::LogicalSize::new(800, 600)).run();
-
-    tokio::signal::ctrl_c().await?;
-
-    router.shutdown().await?;
+    TestApp::<CullingExample>::new(
+        winit::dpi::LogicalSize::new(800, 600),
+        Arc::new(Mutex::new(router)),
+        Arc::new(Mutex::new(proto)),
+        document_id,
+    )
+    .run();
 
     Ok(())
 }

@@ -1,10 +1,17 @@
 //! Example app utilities.
 
-use std::{any::Any, sync::Arc};
+use std::{
+    any::Any,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
+use anyhow::Context as anyContext;
+use automerge::ReadDoc;
+use n0_future::future::block_on;
 use renderling::Context;
+use renderling_crdt::IrohRepo;
 use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
-
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
 
@@ -35,6 +42,9 @@ pub(crate) struct InnerTestApp<T> {
 pub struct TestApp<T> {
     size: winit::dpi::Size,
     inner: Option<InnerTestApp<T>>,
+    router: Arc<Mutex<iroh::protocol::Router>>,
+    iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+    document_id: String,
 }
 
 impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
@@ -102,6 +112,28 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                         },
                     ..
                 } => {
+                    block_on(async {
+                        let doc_id = samod::DocumentId::from_str(&self.document_id).unwrap();
+                        let proto = self.iroh_repo_protocol.lock().unwrap();
+                        let doc = proto
+                            .repo()
+                            .find(doc_id)
+                            .await
+                            .unwrap()
+                            .context("Couldn't find document with this ID").unwrap();
+                        doc.with_document(|doc| {
+                            for key in doc.keys(automerge::ROOT) {
+                                let (value, _) = doc
+                                    .get(automerge::ROOT, &key)
+                                    .unwrap()
+                                    .expect("missing value");
+                                println!("{key}={value}");
+                            }
+                            anyhow::Ok(())
+                        })
+                        .unwrap();
+                        self.router.try_lock().unwrap().shutdown().await.unwrap();
+                    });
                     event_loop.exit();
                 }
                 _ => {
@@ -131,10 +163,18 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
 }
 
 impl<T: TestAppHandler> TestApp<T> {
-    pub fn new(size: impl Into<winit::dpi::Size>) -> Self {
+    pub fn new(
+        size: impl Into<winit::dpi::Size>,
+        router: Arc<Mutex<iroh::protocol::Router>>,
+        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        document_id: String,
+    ) -> Self {
         TestApp {
             size: size.into(),
             inner: None,
+            router,
+            iroh_repo_protocol,
+            document_id,
         }
     }
 
