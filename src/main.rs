@@ -32,7 +32,7 @@ struct FrustumCamera(Camera);
 #[allow(dead_code)]
 struct CullingExample {
     app_camera: AppCamera,
-    controller: example::camera::TurntableCameraController,
+    controller: camera::TurntableCameraController,
     stage: Stage,
     dlights: [AnalyticalLight; 2],
     material_aabb_overlapping: Hybrid<Material>,
@@ -262,7 +262,7 @@ impl TestAppHandler for CullingExample {
             frustum_camera,
             dlights,
             controller: {
-                let mut c = example::camera::TurntableCameraController::default();
+                let mut c = camera::TurntableCameraController::default();
                 c.reset(BOUNDS);
                 c.phi = 0.5;
                 c
