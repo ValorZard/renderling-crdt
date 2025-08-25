@@ -58,6 +58,7 @@ struct CullingExample {
     document_id: String,
     instant: Instant,
     delta: std::time::Duration,
+    player_position: Vec3,
 }
 
 impl CullingExample {
@@ -122,40 +123,53 @@ impl CullingExample {
         frustum_camera: &FrustumCamera,
         material_outside: &Hybrid<Material>,
         material_overlapping: &Hybrid<Material>,
+        player_position: &Vec3,
     ) -> Box<dyn Any> {
         log::info!("generating aabbs with seed {seed}");
         fastrand::seed(seed);
-        Box::new(
-            (0..25u32)
-                .map(|i| {
-                    log::info!("aabb {i}");
-                    let x = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
-                    let y = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
-                    let z = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
-                    let w = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
-                    let h = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
-                    let l = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
+        let mut boxes = (0..25u32)
+            .map(|i| {
+                log::info!("aabb {i}");
+                let x = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
+                let y = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
+                let z = fastrand::f32() * MAX_DIST - MAX_DIST / 2.0;
+                let w = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
+                let h = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
+                let l = fastrand::f32() * (MAX_SIZE - MIN_SIZE) + MIN_SIZE;
 
-                    let rx = std::f32::consts::PI * fastrand::f32();
-                    let ry = std::f32::consts::PI * fastrand::f32();
-                    let rz = std::f32::consts::PI * fastrand::f32();
+                let rx = std::f32::consts::PI * fastrand::f32();
+                let ry = std::f32::consts::PI * fastrand::f32();
+                let rz = std::f32::consts::PI * fastrand::f32();
 
-                    let rotation = Quat::from_euler(EulerRot::XYZ, rx, ry, rz);
+                let rotation = Quat::from_euler(EulerRot::XYZ, rx, ry, rz);
 
-                    let center = Vec3::new(x, y, z);
-                    let half_size = Vec3::new(w, h, l);
-                    Self::make_render_aabb(
-                        rotation,
-                        center,
-                        half_size,
-                        stage,
-                        frustum_camera,
-                        material_outside,
-                        material_overlapping,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
+                let center = Vec3::new(x, y, z);
+                let half_size = Vec3::new(w, h, l);
+                Self::make_render_aabb(
+                    rotation,
+                    center,
+                    half_size,
+                    stage,
+                    frustum_camera,
+                    material_outside,
+                    material_overlapping,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let player = Self::make_render_aabb(
+            Quat::IDENTITY,
+            *player_position,
+            Vec3::new(10., 10.0, 10.),
+            stage,
+            frustum_camera,
+            material_outside,
+            material_overlapping,
+        );
+
+        boxes.push(player);
+
+        Box::new(boxes)
     }
 }
 
@@ -189,6 +203,7 @@ impl ApplicationHandler for CullingExample {
                         &self.frustum_camera,
                         &self.material_aabb_outside,
                         &self.material_aabb_overlapping,
+                        &self.player_position,
                     ));
                     self.next_k += 1;
                     let document_id = self.document_id.clone();
@@ -198,6 +213,18 @@ impl ApplicationHandler for CullingExample {
                         print_document(&document_id, &iroh_repo_protocol).await;
                     });
                     println!("delta: {:?}", self.delta);
+                }
+                if c.as_str() == "w" {
+                    self.player_position.z -= 1.0;
+                }
+                if c.as_str() == "s" {
+                    self.player_position.z += 1.0;
+                }
+                if c.as_str() == "a" {
+                    self.player_position.x -= 1.0;
+                }
+                if c.as_str() == "d" {
+                    self.player_position.x += 1.0;
                 }
             }
             winit::event::WindowEvent::Resized(physical_size) => {
@@ -283,12 +310,14 @@ impl TestAppHandler for CullingExample {
             ..Default::default()
         });
         let app_camera = AppCamera(stage.new_camera(Camera::default()));
+        let player_position = Vec3::new(0.0, 0.0, 5.0);
         resources.push(Self::make_aabbs(
             seed,
             &stage,
             &frustum_camera,
             &material_aabb_outside,
             &material_aabb_overlapping,
+            &player_position,
         ));
         seed += 1;
 
@@ -309,14 +338,19 @@ impl TestAppHandler for CullingExample {
 
         // create player in document
         let document =
-            n0_future::future::block_on({ get_document(&document_id, &iroh_repo_protocol) })
-                .unwrap();
+            n0_future::future::block_on(get_document(&document_id, &iroh_repo_protocol)).unwrap();
 
         let player_id = router.lock().unwrap().endpoint().node_id().to_string();
 
         let _ = document
             .with_document(|doc| {
-                doc.transact(|tx| tx.put(automerge::ROOT, format!("player_{player_id}"), player_id))
+                doc.transact(|tx| {
+                    tx.put(
+                        automerge::ROOT,
+                        format!("player_{player_id}"),
+                        format!("{player_position}"),
+                    )
+                })
             })
             .map_err(debug_err);
 
@@ -343,6 +377,7 @@ impl TestAppHandler for CullingExample {
             document_id,
             instant: Instant::now(),
             delta: std::time::Duration::ZERO,
+            player_position,
         }
     }
 
