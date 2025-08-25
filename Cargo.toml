@@ -7,5 +7,5 @@ edition = "2024"
 env_logger = "0.11.8"
 fastrand = "2.3.0"
 log = "0.4.27"
-renderling = {git = "https://github.com/schell/renderling.git", rev = "5eea6011a552d39aecc264bbfe2e382986a4dcf7"}
+renderling = {git = "https://github.com/schell/renderling.git", rev = "e7c95b65cd0941a99d6aff33434eb3c469e225dd"}
 winit = "0.30.12"
