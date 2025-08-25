@@ -293,14 +293,14 @@ fn main() {
     TestApp::<CullingExample>::new(winit::dpi::LogicalSize::new(800, 600)).run();
 }
 
-
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Mutex},
+    sync::Mutex,
 };
 
 use craballoc::prelude::{GpuArray, Hybrid};
 use renderling::{
+    Context,
     atlas::AtlasImage,
     camera::Camera,
     light::{AnalyticalLight, DirectionalLightDescriptor},
@@ -308,18 +308,14 @@ use renderling::{
     skybox::Skybox,
     stage::{Animator, GltfDocument, Renderlet, Stage, Vertex},
     ui::{FontArc, Section, Text, Ui, UiPath, UiText},
-    Context,
 };
 
-use camera::{
-    CameraControl, TurntableCameraController, WasdMouseCameraController,
-};
+use camera::{CameraControl, TurntableCameraController, WasdMouseCameraController};
 
 pub mod time;
 use time::FPSCounter;
 
-const FONT_BYTES: &[u8] =
-    include_bytes!("fonts/Recursive Mn Lnr St Med Nerd Font Complete.ttf");
+const FONT_BYTES: &[u8] = include_bytes!("fonts/Recursive Mn Lnr St Med Nerd Font Complete.ttf");
 
 const DARK_BLUE_BG_COLOR: Vec4 = Vec4::new(
     0x30 as f32 / 255.0,
