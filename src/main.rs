@@ -324,31 +324,6 @@ impl TestAppHandler for CullingExample {
         });
         let app_camera = AppCamera(stage.new_camera(Camera::default()));
         let local_player_position = Vec3::new(0.0, 0.0, 5.0);
-        resources.push(Self::make_aabbs(
-            seed,
-            &stage,
-            &frustum_camera,
-            &material_aabb_outside,
-            &material_aabb_overlapping,
-            &vec![local_player_position],
-        ));
-        seed += 1;
-
-        let frustum_vertices =
-            stage.new_vertices(frustum_camera.0.frustum().get_mesh().into_iter().map(
-                |(position, normal)| Vertex {
-                    position,
-                    normal,
-                    ..Default::default()
-                },
-            ));
-        let frustum_renderlet = stage.new_renderlet(Renderlet {
-            vertices_array: frustum_vertices.array(),
-            material_id: material_frustum.id(),
-            ..Default::default()
-        });
-        stage.add_renderlet(&frustum_renderlet);
-
         // create player in document
         let document =
             n0_future::future::block_on(get_document(&document_id, &iroh_repo_protocol)).unwrap();
@@ -366,6 +341,31 @@ impl TestAppHandler for CullingExample {
                 })
             })
             .map_err(debug_err);
+
+        resources.push(Self::make_aabbs(
+            seed,
+            &stage,
+            &frustum_camera,
+            &material_aabb_outside,
+            &material_aabb_overlapping,
+            &get_players(&document),
+        ));
+        seed += 1;
+
+        let frustum_vertices =
+            stage.new_vertices(frustum_camera.0.frustum().get_mesh().into_iter().map(
+                |(position, normal)| Vertex {
+                    position,
+                    normal,
+                    ..Default::default()
+                },
+            ));
+        let frustum_renderlet = stage.new_renderlet(Renderlet {
+            vertices_array: frustum_vertices.array(),
+            material_id: material_frustum.id(),
+            ..Default::default()
+        });
+        stage.add_renderlet(&frustum_renderlet);
 
         Self {
             next_k: seed,
