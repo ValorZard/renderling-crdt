@@ -1,12 +1,9 @@
 //! Camera control.
 use std::str::FromStr;
 
-use craballoc::prelude::Hybrid;
-use renderling::{
-    bvol::Aabb,
-    camera::Camera,
-    math::{Mat4, Quat, UVec2, Vec2, Vec3},
-};
+use glam::{Mat4, Quat, UVec2, Vec2, Vec3};
+use renderling::bvol::Aabb;
+use renderling::prelude::*;
 use winit::{event::KeyEvent, keyboard::Key};
 
 const RADIUS_SCROLL_DAMPENING: f32 = 0.001;
