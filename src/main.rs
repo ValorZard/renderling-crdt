@@ -19,7 +19,7 @@ use winit::{
     event_loop::ActiveEventLoop,
     keyboard::Key,
 };
-
+use tokio::sync::Mutex;
 use anyhow::Context as anyContext;
 use automerge::{Automerge, ReadDoc, transaction::Transactable};
 use clap::Parser;
@@ -54,6 +54,9 @@ struct CullingExample {
     frustum_renderlet: Hybrid<Renderlet>,
     resources: BagOfResources,
     next_k: u64,
+    router: Arc<Mutex<iroh::protocol::Router>>,
+    iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+    document_id: String,
 }
 
 impl CullingExample {
@@ -187,6 +190,12 @@ impl ApplicationHandler for CullingExample {
                         &self.material_aabb_overlapping,
                     ));
                     self.next_k += 1;
+                    let document_id = self.document_id.clone();
+                    let iroh_repo_protocol = self.iroh_repo_protocol.clone();
+                    n0_future::task::spawn(async move {
+                        // Lock inside the async block, not before
+                        print_document(&document_id, &iroh_repo_protocol).await;
+                    });
                 }
             }
             winit::event::WindowEvent::Resized(physical_size) => {
@@ -217,6 +226,9 @@ impl TestAppHandler for CullingExample {
         _event_loop: &ActiveEventLoop,
         _window: Arc<winit::window::Window>,
         ctx: &Context,
+        router: Arc<Mutex<iroh::protocol::Router>>,
+        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        document_id: String,
     ) -> Self {
         let mut seed = 46;
         let mut resources = BagOfResources::default();
@@ -311,6 +323,9 @@ impl TestAppHandler for CullingExample {
             frustum_vertices,
             frustum_renderlet,
             resources,
+            router,
+            iroh_repo_protocol,
+            document_id,
         }
     }
 
@@ -596,7 +611,6 @@ fn debug_err(e: impl std::fmt::Debug) -> anyhow::Error {
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
 };
 
 use craballoc::prelude::{GpuArray, Hybrid};
@@ -712,7 +726,7 @@ pub enum Model {
 pub struct App {
     last_frame_instant: f64,
     skybox_image_bytes: Option<Vec<u8>>,
-    loads: Arc<Mutex<HashMap<std::path::PathBuf, Vec<u8>>>>,
+    loads: Arc<std::sync::Mutex<HashMap<std::path::PathBuf, Vec<u8>>>>,
     pub stage: Stage,
     camera: Hybrid<Camera>,
     _lighting: AnalyticalLight,
@@ -768,7 +782,7 @@ impl App {
             animations_conflict: false,
 
             skybox_image_bytes: None,
-            loads: Arc::new(Mutex::new(HashMap::default())),
+            loads: Arc::new(std::sync::Mutex::new(HashMap::default())),
             last_frame_instant: now(),
 
             camera_controller: match camera_control {

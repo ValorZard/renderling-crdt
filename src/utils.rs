@@ -3,9 +3,9 @@
 use std::{
     any::Any,
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc},
 };
-
+use tokio::sync::Mutex;
 use anyhow::Context as anyContext;
 use automerge::ReadDoc;
 use n0_future::future::block_on;
@@ -25,11 +25,37 @@ impl BagOfResources {
     }
 }
 
+pub async fn print_document(doc_id: &str, iroh_repo_protocol: &Arc<Mutex<IrohRepo>>) {
+    let doc_id = samod::DocumentId::from_str(doc_id).unwrap();
+    let proto = iroh_repo_protocol.lock().await;
+    let doc = proto
+        .repo()
+        .find(doc_id)
+        .await
+        .unwrap()
+        .context("Couldn't find document with this ID")
+        .unwrap();
+    doc.with_document(|doc| {
+        for key in doc.keys(automerge::ROOT) {
+            let (value, _) = doc
+                .get(automerge::ROOT, &key)
+                .unwrap()
+                .expect("missing value");
+            println!("{key}={value}");
+        }
+        anyhow::Ok(())
+    })
+    .unwrap();
+}
+
 pub trait TestAppHandler: winit::application::ApplicationHandler {
     fn new(
         event_loop: &winit::event_loop::ActiveEventLoop,
         window: Arc<winit::window::Window>,
         ctx: &Context,
+        router: Arc<Mutex<iroh::protocol::Router>>,
+        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        document_id: String,
     ) -> Self;
     fn render(&mut self, ctx: &Context);
 }
@@ -86,7 +112,14 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                 .unwrap(),
         );
         let ctx = Context::try_from_window(None, window.clone()).unwrap();
-        let mut app = T::new(event_loop, window, &ctx);
+        let mut app = T::new(
+            event_loop,
+            window,
+            &ctx,
+            self.router.clone(),
+            self.iroh_repo_protocol.clone(),
+            self.document_id.clone(),
+        );
         app.resumed(event_loop);
         self.inner = Some(InnerTestApp { app, ctx });
     }
@@ -113,26 +146,7 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                     ..
                 } => {
                     block_on(async {
-                        let doc_id = samod::DocumentId::from_str(&self.document_id).unwrap();
-                        let proto = self.iroh_repo_protocol.lock().unwrap();
-                        let doc = proto
-                            .repo()
-                            .find(doc_id)
-                            .await
-                            .unwrap()
-                            .context("Couldn't find document with this ID")
-                            .unwrap();
-                        doc.with_document(|doc| {
-                            for key in doc.keys(automerge::ROOT) {
-                                let (value, _) = doc
-                                    .get(automerge::ROOT, &key)
-                                    .unwrap()
-                                    .expect("missing value");
-                                println!("{key}={value}");
-                            }
-                            anyhow::Ok(())
-                        })
-                        .unwrap();
+                        print_document(&self.document_id, &self.iroh_repo_protocol.clone()).await;
                         self.router.try_lock().unwrap().shutdown().await.unwrap();
                     });
                     event_loop.exit();
