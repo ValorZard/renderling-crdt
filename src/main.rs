@@ -26,7 +26,7 @@ use winit::{
     keyboard::Key,
 };
 
-use samod::{DocumentId, PeerId, Samod, storage::TokioFilesystemStorage};
+use samod::{DocHandle, DocumentId, PeerId, Samod, storage::TokioFilesystemStorage};
 
 const MIN_SIZE: f32 = 0.5;
 const MAX_SIZE: f32 = 4.0;
@@ -55,9 +55,10 @@ struct CullingExample {
     next_k: u64,
     router: RouterContainer,
     iroh_repo_protocol: ProtocolContainer,
-    document_id: String,
+    document: DocHandle,
     instant: Instant,
     delta: std::time::Duration,
+    player_id: String,
     player_position: Vec3,
 }
 
@@ -194,6 +195,7 @@ impl ApplicationHandler for CullingExample {
                     },
                 ..
             } => {
+                let doc = self.document.clone();
                 if c.as_str() == "r" {
                     self.resources.drain();
                     let _ = self.stage.commit();
@@ -206,26 +208,34 @@ impl ApplicationHandler for CullingExample {
                         &self.player_position,
                     ));
                     self.next_k += 1;
-                    let document_id = self.document_id.clone();
-                    let iroh_repo_protocol = self.iroh_repo_protocol.clone();
-                    n0_future::task::spawn(async move {
-                        // Lock inside the async block, not before
-                        print_document(&document_id, &iroh_repo_protocol).await;
-                    });
+                    print_document(&doc);
                     println!("delta: {:?}", self.delta);
                 }
+                let speed = 50.;
                 if c.as_str() == "w" {
-                    self.player_position.z -= 1.0;
+                    self.player_position.z -= speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "s" {
-                    self.player_position.z += 1.0;
+                    self.player_position.z += speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "a" {
-                    self.player_position.x -= 1.0;
+                    self.player_position.x -= speed * self.delta.as_secs_f32();
                 }
                 if c.as_str() == "d" {
-                    self.player_position.x += 1.0;
+                    self.player_position.x += speed * self.delta.as_secs_f32();
                 }
+
+                let _ = doc
+                    .with_document(|doc| {
+                        doc.transact(|tx| {
+                            tx.put(
+                                automerge::ROOT,
+                                format!("player_{}", self.player_id),
+                                format!("{:?}", self.player_position),
+                            )
+                        })
+                    })
+                    .map_err(debug_err);
             }
             winit::event::WindowEvent::Resized(physical_size) => {
                 log::info!("window resized to {physical_size:?}");
@@ -374,9 +384,10 @@ impl TestAppHandler for CullingExample {
             resources,
             router,
             iroh_repo_protocol,
-            document_id,
+            document,
             instant: Instant::now(),
             delta: std::time::Duration::ZERO,
+            player_id,
             player_position,
         }
     }

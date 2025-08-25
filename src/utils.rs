@@ -34,8 +34,7 @@ pub async fn get_document(
         .context("Couldn't find document with this ID")
 }
 
-pub async fn print_document(doc_id: &str, iroh_repo_protocol: &ProtocolContainer) {
-    let doc = get_document(doc_id, iroh_repo_protocol).await.unwrap();
+pub fn print_document(doc: &DocHandle) {
     doc.with_document(|doc| {
         for key in doc.keys(automerge::ROOT) {
             let (value, _) = doc
@@ -148,7 +147,6 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                     ..
                 } => {
                     block_on(async {
-                        print_document(&self.document_id, &self.iroh_repo_protocol.clone()).await;
                         self.router.try_lock().unwrap().shutdown().await.unwrap();
                     });
                     event_loop.exit();
