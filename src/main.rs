@@ -312,7 +312,9 @@ impl TestAppHandler for CullingExample {
         let player_id = router.lock().unwrap().endpoint().node_id().to_string();
 
         let _ = document
-            .with_document(|doc| doc.transact(|tx| tx.put(automerge::ROOT, "player", player_id)))
+            .with_document(|doc| {
+                doc.transact(|tx| tx.put(automerge::ROOT, format!("player_{player_id}"), player_id))
+            })
             .map_err(debug_err);
 
         Self {
