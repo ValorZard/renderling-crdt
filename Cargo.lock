@@ -2571,8 +2571,10 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "fastrand 2.3.0",
+ "lazy_static",
  "log",
  "renderling",
+ "wgpu",
  "winit",
 ]
 

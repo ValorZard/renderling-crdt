@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 env_logger = "0.11.8"
 fastrand = "2.3.0"
+lazy_static = "1.5.0"
 log = "0.4.27"
 renderling = {git = "https://github.com/schell/renderling.git", rev = "e7c95b65cd0941a99d6aff33434eb3c469e225dd"}
+wgpu = "26.0.1"
 winit = "0.30.12"
