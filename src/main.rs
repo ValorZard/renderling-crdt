@@ -211,6 +211,7 @@ impl ApplicationHandler for CullingExample {
                         &get_players(&doc),
                     ));
                     self.next_k += 1;
+                    println!("current player: {}", self.player_id);
                     print_document(&doc);
                     println!("delta: {:?}", self.delta);
                 }

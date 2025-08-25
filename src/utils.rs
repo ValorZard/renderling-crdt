@@ -35,6 +35,7 @@ pub async fn get_document(
 }
 
 pub fn print_document(doc: &DocHandle) {
+    println!("Document ID: {}", doc.document_id());
     doc.with_document(|doc| {
         for key in doc.keys(automerge::ROOT) {
             let (value, _) = doc
