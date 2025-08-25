@@ -63,6 +63,55 @@ impl CullingExample {
         Aabb::new(min, max)
     }
 
+    fn make_render_aabb(
+        rotation: Quat,
+        center: Vec3,
+        half_size: Vec3,
+        stage: &Stage,
+        frustum_camera: &FrustumCamera,
+        material_outside: &Hybrid<Material>,
+        material_overlapping: &Hybrid<Material>,
+    ) -> (
+        Gpu<Renderlet>,
+        renderling::prelude::HybridArray<renderling::stage::Vertex>,
+        renderling::prelude::Hybrid<renderling::transform::Transform>,
+    ) {
+        let aabb = Self::make_aabb(Vec3::ZERO, half_size);
+        let aabb_transform = Transform {
+            translation: center,
+            rotation,
+            ..Default::default()
+        };
+
+        let transform = stage.new_transform(aabb_transform);
+        let (aabb_vertices, aabb_renderlet) = {
+            let material_id = if BoundingSphere::from(aabb)
+                .is_inside_camera_view(&frustum_camera.0, transform.get())
+                .0
+            {
+                material_overlapping.id()
+            } else {
+                material_outside.id()
+            };
+            let (renderlet, vertices) = stage
+                .builder()
+                .with_vertices(
+                    aabb.get_mesh()
+                        .into_iter()
+                        .map(|(position, normal)| Vertex {
+                            position,
+                            normal,
+                            ..Default::default()
+                        }),
+                )
+                .with_transform_id(transform.id())
+                .with_material_id(material_id)
+                .build();
+            (renderlet, vertices.into_gpu_only())
+        };
+        (aabb_renderlet, aabb_vertices, transform)
+    }
+
     fn make_aabbs(
         seed: u64,
         stage: &Stage,
@@ -91,38 +140,15 @@ impl CullingExample {
 
                     let center = Vec3::new(x, y, z);
                     let half_size = Vec3::new(w, h, l);
-                    let aabb = Self::make_aabb(Vec3::ZERO, half_size);
-                    let aabb_transform = Transform {
-                        translation: center,
+                    Self::make_render_aabb(
                         rotation,
-                        ..Default::default()
-                    };
-
-                    let transform = stage.new_transform(aabb_transform);
-                    let (aabb_vertices, aabb_renderlet) = {
-                        let material_id = if BoundingSphere::from(aabb)
-                            .is_inside_camera_view(&frustum_camera.0, transform.get())
-                            .0
-                        {
-                            material_overlapping.id()
-                        } else {
-                            material_outside.id()
-                        };
-                        let (renderlet, vertices) = stage
-                            .builder()
-                            .with_vertices(aabb.get_mesh().into_iter().map(|(position, normal)| {
-                                Vertex {
-                                    position,
-                                    normal,
-                                    ..Default::default()
-                                }
-                            }))
-                            .with_transform_id(transform.id())
-                            .with_material_id(material_id)
-                            .build();
-                        (renderlet, vertices.into_gpu_only())
-                    };
-                    (aabb_renderlet, aabb_vertices, transform)
+                        center,
+                        half_size,
+                        stage,
+                        frustum_camera,
+                        material_outside,
+                        material_overlapping,
+                    )
                 })
                 .collect::<Vec<_>>(),
         )

@@ -120,7 +120,8 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                             .find(doc_id)
                             .await
                             .unwrap()
-                            .context("Couldn't find document with this ID").unwrap();
+                            .context("Couldn't find document with this ID")
+                            .unwrap();
                         doc.with_document(|doc| {
                             for key in doc.keys(automerge::ROOT) {
                                 let (value, _) = doc
