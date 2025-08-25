@@ -4,7 +4,12 @@ use std::{any::Any, sync::Arc};
 mod camera;
 mod utils;
 use crate::{camera::CameraController, utils::*};
+use anyhow::Context as anyContext;
+use automerge::{Automerge, ReadDoc, transaction::Transactable};
+use clap::Parser;
 use glam::*;
+use hex::encode;
+use iroh::NodeId;
 use renderling::{
     Context,
     bvol::{Aabb, BoundingSphere},
@@ -12,20 +17,15 @@ use renderling::{
     prelude::*,
     tonemapping::srgba_to_linear,
 };
+use renderling_crdt::IrohRepo;
 use std::str::FromStr;
+use tokio::sync::Mutex;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent},
     event_loop::ActiveEventLoop,
     keyboard::Key,
 };
-use tokio::sync::Mutex;
-use anyhow::Context as anyContext;
-use automerge::{Automerge, ReadDoc, transaction::Transactable};
-use clap::Parser;
-use hex::encode;
-use iroh::NodeId;
-use renderling_crdt::IrohRepo;
 
 use samod::{DocumentId, PeerId, Samod, storage::TokioFilesystemStorage};
 
@@ -609,9 +609,7 @@ fn debug_err(e: impl std::fmt::Debug) -> anyhow::Error {
     anyhow::anyhow!("{e:?}")
 }
 
-use std::{
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use craballoc::prelude::{GpuArray, Hybrid};
 use renderling::{

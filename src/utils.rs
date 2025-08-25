@@ -1,16 +1,13 @@
 //! Example app utilities.
 
-use std::{
-    any::Any,
-    str::FromStr,
-    sync::{Arc},
-};
-use tokio::sync::Mutex;
 use anyhow::Context as anyContext;
 use automerge::ReadDoc;
 use n0_future::future::block_on;
 use renderling::Context;
 use renderling_crdt::IrohRepo;
+use samod::DocHandle;
+use std::{any::Any, str::FromStr, sync::Arc};
+use tokio::sync::Mutex;
 use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
@@ -25,16 +22,21 @@ impl BagOfResources {
     }
 }
 
-pub async fn print_document(doc_id: &str, iroh_repo_protocol: &Arc<Mutex<IrohRepo>>) {
+pub async fn get_document(
+    doc_id: &str,
+    iroh_repo_protocol: &Arc<Mutex<IrohRepo>>,
+) -> Result<DocHandle, anyhow::Error> {
     let doc_id = samod::DocumentId::from_str(doc_id).unwrap();
     let proto = iroh_repo_protocol.lock().await;
-    let doc = proto
+    proto
         .repo()
         .find(doc_id)
-        .await
-        .unwrap()
+        .await?
         .context("Couldn't find document with this ID")
-        .unwrap();
+}
+
+pub async fn print_document(doc_id: &str, iroh_repo_protocol: &Arc<Mutex<IrohRepo>>) {
+    let doc = get_document(doc_id, iroh_repo_protocol).await.unwrap();
     doc.with_document(|doc| {
         for key in doc.keys(automerge::ROOT) {
             let (value, _) = doc
