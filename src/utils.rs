@@ -3,7 +3,7 @@
 use std::{any::Any, sync::Arc};
 
 use renderling::Context;
-use winit::monitor::MonitorHandle;
+use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
 
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
@@ -69,7 +69,9 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                         .with_fullscreen(
                             maybe_lowest_monitor
                                 .map(|m| winit::window::Fullscreen::Borderless(Some(m))),
-                        ),
+                        )
+                        // make this false so tokio can run
+                        .with_drag_and_drop(false),
                 )
                 .unwrap(),
         );

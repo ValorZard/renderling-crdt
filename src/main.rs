@@ -6,17 +6,28 @@ mod utils;
 use crate::{camera::CameraController, utils::*};
 use glam::*;
 use renderling::{
+    Context,
     bvol::{Aabb, BoundingSphere},
     math::hex_to_vec4,
     prelude::*,
     tonemapping::srgba_to_linear,
 };
+use std::str::FromStr;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent},
     event_loop::ActiveEventLoop,
     keyboard::Key,
 };
+
+use anyhow::Context as anyContext;
+use automerge::{Automerge, ReadDoc, transaction::Transactable};
+use clap::Parser;
+use hex::encode;
+use iroh::NodeId;
+use renderling_crdt::IrohRepo;
+
+use samod::{DocumentId, PeerId, Samod, storage::TokioFilesystemStorage};
 
 const MIN_SIZE: f32 = 0.5;
 const MAX_SIZE: f32 = 4.0;
@@ -287,10 +298,265 @@ impl TestAppHandler for CullingExample {
     }
 }
 
-fn main() {
-    env_logger::builder().init();
-    log::info!("starting example-culling");
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// A NodeId to connect to and keep syncing with
+    #[clap(long)]
+    sync_with: Option<NodeId>,
+
+    /// Path where storage files will be created
+    #[clap(long, default_value = "./crdt_data")]
+    storage_path: String,
+
+    /// Print the secret key
+    #[clap(long)]
+    print_secret_key: bool,
+
+    #[clap(subcommand)]
+    command: Commands,
+}
+
+/// Subcommands for the iroh doctor.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Creates a new document with given key-value pairs
+    /// and prints its document ID.
+    Create {
+        /// An initial key to set
+        key: String,
+        /// An initial value to set
+        value: String,
+    },
+    /// Updates a document with the given document ID, either
+    /// inserting a new key-value pair or updating the value at
+    /// an existing key.
+    Upsert {
+        /// The document ID of the document to modify
+        doc: String,
+        /// The key to set
+        key: String,
+        /// The value to set at the given key
+        value: String,
+    },
+    /// Prints document's contents by ID
+    Print {
+        /// The document's ID
+        doc: String,
+    },
+    /// Subscribe to a document and print changes as they occur
+    Subscribe {
+        /// The document's ID to subscribe to
+        doc: String,
+    },
+    /// Delete a key from the document
+    Delete {
+        /// The document's ID of the document to modify
+        doc: String,
+
+        /// The key you want to delete
+        key: String,
+    },
+    /// Host the app and serve existing documents from the automerge-repo stored in at config-path
+    Host,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let args = Args::parse();
+
+    // Pull in the secret key from the environment variable if it exists
+    // This key is the public Node ID used to identify the node in the network
+    // If not provided, a random key will be generated, and a new Node ID will
+    // be assigned each time the app is started
+    let secret_key = match std::env::var("IROH_SECRET") {
+        Ok(key_hex) => match iroh::SecretKey::from_str(&key_hex) {
+            Ok(key) => Some(key),
+            Err(_) => {
+                println!("invalid IROH_SECRET provided: not valid hex");
+                None
+            }
+        },
+        Err(_) => None,
+    };
+
+    let secret_key = match secret_key {
+        Some(key) => {
+            println!("Using existing key: {}", key.public());
+            key
+        }
+        None => {
+            println!("Generating new key");
+            let mut rng = rand::rngs::OsRng;
+            iroh::SecretKey::generate(&mut rng)
+        }
+    };
+
+    if args.print_secret_key {
+        println!("Secret Key: {}", encode(secret_key.to_bytes()));
+        println!(
+            "Set env var for persistent Node ID: export IROH_SECRET={}",
+            encode(secret_key.to_bytes())
+        );
+    }
+
+    let endpoint = iroh::Endpoint::builder()
+        .discovery_n0()
+        .secret_key(secret_key)
+        .bind()
+        .await?;
+
+    println!("Node ID: {}", endpoint.node_id());
+
+    let samod = Samod::build_tokio()
+        .with_peer_id(PeerId::from_string(endpoint.node_id().to_string()))
+        .with_storage(TokioFilesystemStorage::new(format!(
+            "{}/{}",
+            args.storage_path,
+            endpoint.node_id()
+        )))
+        .load()
+        .await;
+    let proto = IrohRepo::new(endpoint.clone(), samod);
+    let router = iroh::protocol::Router::builder(endpoint)
+        .accept(IrohRepo::SYNC_ALPN, proto.clone())
+        .spawn();
+
+    println!("Running as {}", router.endpoint().node_id());
+
+    if let Some(addr) = args.sync_with {
+        tokio::spawn({
+            let proto = proto.clone();
+            async move { proto.sync_with(addr).await }
+        });
+
+        proto
+            .repo()
+            .when_connected(PeerId::from_string(addr.to_string()))
+            .await?;
+        println!("Connected to {addr}");
+    }
+
+    match args.command {
+        Commands::Create { key, value } => {
+            let mut doc = Automerge::new();
+            doc.transact(|tx| tx.put(automerge::ROOT, key, value))
+                .map_err(debug_err)?;
+            let doc = proto.repo().create(doc).await?;
+            println!("Created document {}", doc.document_id());
+        }
+        Commands::Upsert { doc, key, value } => {
+            let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
+            let doc = proto
+                .repo()
+                .find(doc_id)
+                .await?
+                .context("Couldn't find document with this ID")?;
+            doc.with_document(|doc| doc.transact(|tx| tx.put(automerge::ROOT, key, value)))
+                .map_err(debug_err)?;
+            println!("Updated document");
+        }
+        Commands::Delete { doc, key } => {
+            let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
+            let doc = proto
+                .repo()
+                .find(doc_id)
+                .await?
+                .context("Couldn't find document with this ID")?;
+            doc.with_document(|doc| doc.transact(|tx| tx.delete(automerge::ROOT, key)))
+                .map_err(debug_err)?;
+            println!("Key deleted!");
+        }
+        Commands::Print { doc } => {
+            let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
+            let doc = proto
+                .repo()
+                .find(doc_id)
+                .await?
+                .context("Couldn't find document with this ID")?;
+            doc.with_document(|doc| {
+                for key in doc.keys(automerge::ROOT) {
+                    let (value, _) = doc.get(automerge::ROOT, &key)?.expect("missing value");
+                    println!("{key}={value}");
+                }
+                anyhow::Ok(())
+            })?;
+        }
+        Commands::Subscribe { doc } => {
+            let doc_id = DocumentId::from_str(&doc).context("Couldn't parse document ID")?;
+            let doc = proto
+                .repo()
+                .find(doc_id.clone())
+                .await?
+                .context("Couldn't find document with this ID")?;
+
+            println!("Subscribing to document {} for changes...", doc_id);
+
+            // Print initial state
+            println!("Initial document state:");
+            doc.with_document(|doc| {
+                for key in doc.keys(automerge::ROOT) {
+                    let (value, _) = doc.get(automerge::ROOT, &key)?.expect("missing value");
+                    println!("  {key}={value}");
+                }
+                anyhow::Ok(())
+            })?;
+
+            // Set up polling for changes (no push available yet)
+            tokio::spawn(async move {
+                // Track the last known heads to detect changes
+                let mut last_heads = doc.with_document(|doc| doc.get_heads());
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                    let current_heads = doc.with_document(|doc| doc.get_heads());
+                    if current_heads == last_heads {
+                        continue;
+                    }
+
+                    last_heads = current_heads;
+
+                    println!("Document changed! New state:");
+
+                    // When changes are detected, print the updated document contents...
+                    if let Err(e) = doc.with_document(|current_doc| {
+                        for key in current_doc.keys(automerge::ROOT) {
+                            let (value, _) = current_doc
+                                .get(automerge::ROOT, &key)?
+                                .expect("missing value");
+                            println!("  {key}={value}");
+                        }
+                        anyhow::Ok(())
+                    }) {
+                        eprintln!("Error reading document content: {e}");
+                    }
+                }
+            });
+        }
+        Commands::Host => {
+            println!("Hosting existing documents...");
+            println!("Repository is now hosted and ready for sync operations.");
+            println!("Other nodes can connect to sync with this repository.");
+        }
+    }
+
+    println!("Waiting for Ctrl+C");
+
     TestApp::<CullingExample>::new(winit::dpi::LogicalSize::new(800, 600)).run();
+
+    tokio::signal::ctrl_c().await?;
+
+    router.shutdown().await?;
+
+    Ok(())
+}
+
+fn debug_err(e: impl std::fmt::Debug) -> anyhow::Error {
+    anyhow::anyhow!("{e:?}")
 }
 
 use std::{
@@ -300,7 +566,6 @@ use std::{
 
 use craballoc::prelude::{GpuArray, Hybrid};
 use renderling::{
-    Context,
     atlas::AtlasImage,
     camera::Camera,
     light::{AnalyticalLight, DirectionalLightDescriptor},
@@ -631,13 +896,6 @@ impl App {
                     animated_nodes.extend(target_nodes);
 
                     log::trace!("    {i} {:?} {}s", a.name, a.length_in_seconds());
-                    // for (t, tween) in a.tweens.iter().enumerate() {
-                    //     log::trace!(
-                    //         "      tween {t} targets node {} {}",
-                    //         tween.target_node_index,
-                    //         tween.properties.description()
-                    //     );
-                    // }
                     Animator::new(doc.nodes.iter(), a.clone())
                 })
                 .collect(),
@@ -646,27 +904,6 @@ impl App {
             log::trace!("  and some animations conflict");
         }
         self.animations_conflict = has_conflicting_animations;
-
-        // // Update lights and shadows
-        // for light in doc.lights.iter() {
-        //     if let Some(dir) = light.details.as_directional() {
-        //         log::info!("found a directional light to use for shadows");
-        //         {
-        //             let (p, j) = dir.get().shadow_mapping_projection_and_view(
-        //                 &light.node_transform.get_global_transform().into(),
-        //                 &self.camera.get(),
-        //             );
-        //             let mut guard = self.lighting.shadow_map.descriptor_lock();
-        //             guard.light_space_transform = p * j;
-        //         }
-
-        //         self.lighting
-        //             .shadow_map
-        //             .update(&self.lighting.lighting, doc.renderlets.values().flatten());
-        //         self.lighting.light = light.light.clone();
-        //         self.lighting.light_details = dir.clone();
-        //     }
-        // }
 
         self.model = Model::Gltf(Box::new(doc));
     }
@@ -731,86 +968,3 @@ impl App {
         }
     }
 }
-
-// /// Sets up the demo for a given model
-// pub async fn demo(
-//     ctx: &Context,
-//     model: Option<impl AsRef<str>>,
-//     skybox: Option<impl AsRef<str>>,
-// ) -> impl FnMut(&mut Context, Option<&winit::event::WindowEvent>) {
-//     let mut app = App::new(ctx).await;
-//     if let Some(file) = model {
-//         app.load(file.as_ref());
-//     }
-//     if let Some(file) = skybox {
-//         app.load(file.as_ref());
-//     }
-//     let mut event_state = renderling_gpui::EventState::default();
-//     move |r, ev: Option<&winit::event::WindowEvent>| {
-//         if let Some(ev) = ev {
-//             match ev {
-//                 winit::event::WindowEvent::MouseWheel { delta, .. } => {
-//                     let delta = match delta {
-//                         winit::event::MouseScrollDelta::LineDelta(_, up) =>
-// *up,                         winit::event::MouseScrollDelta::PixelDelta(pos)
-// => pos.y as f32,                     };
-
-//                     app.zoom(r, delta);
-//                 }
-//                 winit::event::WindowEvent::CursorMoved { position, .. } => {
-//                     app.pan(r, *position);
-//                 }
-//                 winit::event::WindowEvent::MouseInput { state, button, .. }
-// => {                     app.mouse_button(*state, *button);
-//                 }
-//                 winit::event::WindowEvent::KeyboardInput { input, .. } => {
-//                     app.key_input(r, *input);
-//                 }
-//                 winit::event::WindowEvent::Resized(size) => {
-//                     log::trace!("resizing to {size:?}");
-//                     app.resize(r, size.width, size.height);
-//                     let _ = app
-//                         .gpui
-//                         .0
-//                         .graph
-//                         .get_resource::<ScreenSize>()
-//                         .unwrap()
-//                         .unwrap();
-//                 }
-//                 winit::event::WindowEvent::DroppedFile(path) => {
-//                     log::trace!("got dropped file event: {}",
-// path.display());                     let path = format!("{}",
-// path.display());                     app.load(&path);
-//                 }
-//                 _ => {}
-//             }
-
-//             if let Some(ev) = event_state.event_from_winit(ev) {
-//                 let scene =
-// r.graph.get_resource_mut::<Scene>().unwrap().unwrap();                 let
-// channel = scene.get_debug_channel();                 let mut
-// set_debug_channel = |mode| {                     log::debug!("setting debug
-// mode to {mode:?}");                     if channel != mode {
-//                         scene.set_debug_channel(mode);
-//                     } else {
-//                         scene.set_debug_channel(DebugChannel::None);
-//                     }
-//                 };
-
-//                 match app.ui.event(ev) {
-//                     None => {}
-//                     Some(ev) => match ev {
-//                         UiEvent::ToggleDebugChannel(channel) =>
-// set_debug_channel(channel),                     },
-//                 }
-//             }
-//         } else {
-//             app.tick_loads(r);
-//             app.update_camera_view(r);
-//             app.animate(r);
-//             app.gpui.layout(&mut app.ui);
-//             app.gpui.render(&mut app.ui);
-//             r.render().unwrap();
-//         }
-//     }
-// }
