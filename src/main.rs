@@ -171,11 +171,6 @@ impl ApplicationHandler for CullingExample {
         event: winit::event::WindowEvent,
     ) {
         match event {
-            winit::event::WindowEvent::RedrawRequested => {
-                let new_instant = Instant::now();
-                self.delta = new_instant.duration_since(self.instant);
-                self.instant = new_instant;
-            }
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -352,6 +347,11 @@ impl TestAppHandler for CullingExample {
     }
 
     fn render(&mut self, ctx: &Context) {
+        // delta time
+        let new_instant = Instant::now();
+        self.delta = new_instant.duration_since(self.instant);
+        self.instant = new_instant;
+
         let size = self.stage.get_size();
         self.controller.update_camera(size, &self.app_camera.0);
 
