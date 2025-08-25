@@ -7,7 +7,6 @@ use renderling::Context;
 use renderling_crdt::IrohRepo;
 use samod::DocHandle;
 use std::{any::Any, str::FromStr, sync::Arc};
-use tokio::sync::Mutex;
 use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
@@ -24,7 +23,7 @@ impl BagOfResources {
 
 pub async fn get_document(
     doc_id: &str,
-    iroh_repo_protocol: &Arc<Mutex<IrohRepo>>,
+    iroh_repo_protocol: &ProtocolContainer,
 ) -> Result<DocHandle, anyhow::Error> {
     let doc_id = samod::DocumentId::from_str(doc_id).unwrap();
     let proto = iroh_repo_protocol.lock().await;
@@ -35,7 +34,7 @@ pub async fn get_document(
         .context("Couldn't find document with this ID")
 }
 
-pub async fn print_document(doc_id: &str, iroh_repo_protocol: &Arc<Mutex<IrohRepo>>) {
+pub async fn print_document(doc_id: &str, iroh_repo_protocol: &ProtocolContainer) {
     let doc = get_document(doc_id, iroh_repo_protocol).await.unwrap();
     doc.with_document(|doc| {
         for key in doc.keys(automerge::ROOT) {
@@ -49,14 +48,15 @@ pub async fn print_document(doc_id: &str, iroh_repo_protocol: &Arc<Mutex<IrohRep
     })
     .unwrap();
 }
-
+pub type RouterContainer = Arc<std::sync::Mutex<iroh::protocol::Router>>;
+pub type ProtocolContainer = Arc<tokio::sync::Mutex<IrohRepo>>;
 pub trait TestAppHandler: winit::application::ApplicationHandler {
     fn new(
         event_loop: &winit::event_loop::ActiveEventLoop,
         window: Arc<winit::window::Window>,
         ctx: &Context,
-        router: Arc<Mutex<iroh::protocol::Router>>,
-        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        router: RouterContainer,
+        iroh_repo_protocol: ProtocolContainer,
         document_id: String,
     ) -> Self;
     fn render(&mut self, ctx: &Context);
@@ -70,8 +70,8 @@ pub(crate) struct InnerTestApp<T> {
 pub struct TestApp<T> {
     size: winit::dpi::Size,
     inner: Option<InnerTestApp<T>>,
-    router: Arc<Mutex<iroh::protocol::Router>>,
-    iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+    router: RouterContainer,
+    iroh_repo_protocol: ProtocolContainer,
     document_id: String,
 }
 
@@ -182,8 +182,8 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
 impl<T: TestAppHandler> TestApp<T> {
     pub fn new(
         size: impl Into<winit::dpi::Size>,
-        router: Arc<Mutex<iroh::protocol::Router>>,
-        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        router: RouterContainer,
+        iroh_repo_protocol: ProtocolContainer,
         document_id: String,
     ) -> Self {
         TestApp {

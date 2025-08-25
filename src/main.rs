@@ -19,7 +19,6 @@ use renderling::{
 };
 use renderling_crdt::IrohRepo;
 use std::str::FromStr;
-use tokio::sync::Mutex;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent},
@@ -54,8 +53,8 @@ struct CullingExample {
     frustum_renderlet: Hybrid<Renderlet>,
     resources: BagOfResources,
     next_k: u64,
-    router: Arc<Mutex<iroh::protocol::Router>>,
-    iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+    router: RouterContainer,
+    iroh_repo_protocol: ProtocolContainer,
     document_id: String,
 }
 
@@ -226,8 +225,8 @@ impl TestAppHandler for CullingExample {
         _event_loop: &ActiveEventLoop,
         _window: Arc<winit::window::Window>,
         ctx: &Context,
-        router: Arc<Mutex<iroh::protocol::Router>>,
-        iroh_repo_protocol: Arc<Mutex<IrohRepo>>,
+        router: RouterContainer,
+        iroh_repo_protocol: ProtocolContainer,
         document_id: String,
     ) -> Self {
         let mut seed = 46;
@@ -304,6 +303,17 @@ impl TestAppHandler for CullingExample {
             ..Default::default()
         });
         stage.add_renderlet(&frustum_renderlet);
+
+        // create player in document
+        let document =
+            n0_future::future::block_on({ get_document(&document_id, &iroh_repo_protocol) })
+                .unwrap();
+
+        let player_id = router.lock().unwrap().endpoint().node_id().to_string();
+
+        let _ = document
+            .with_document(|doc| doc.transact(|tx| tx.put(automerge::ROOT, "player", player_id)))
+            .map_err(debug_err);
 
         Self {
             next_k: seed,
@@ -596,8 +606,8 @@ async fn main() -> anyhow::Result<()> {
 
     TestApp::<CullingExample>::new(
         winit::dpi::LogicalSize::new(800, 600),
-        Arc::new(Mutex::new(router)),
-        Arc::new(Mutex::new(proto)),
+        Arc::new(std::sync::Mutex::new(router)),
+        Arc::new(tokio::sync::Mutex::new(proto)),
         document_id,
     )
     .run();
