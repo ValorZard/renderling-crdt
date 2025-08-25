@@ -1,10 +1,13 @@
 //! Example app utilities.
 
-use std::{any::Any, sync::Arc};
-
-use renderling::Context;
-use winit::monitor::MonitorHandle;
-
+use anyhow::Context as anyContext;
+use automerge::ReadDoc;
+use n0_future::future::block_on;
+use renderling::{Context, math::Vec3};
+use renderling_crdt::IrohRepo;
+use samod::DocHandle;
+use std::{any::Any, str::FromStr, sync::Arc, vec};
+use winit::{monitor::MonitorHandle, platform::windows::WindowAttributesExtWindows};
 #[derive(Default)]
 pub struct BagOfResources(Vec<Box<dyn Any>>);
 
@@ -18,11 +21,76 @@ impl BagOfResources {
     }
 }
 
+pub async fn get_document(
+    doc_id: &str,
+    iroh_repo_protocol: &ProtocolContainer,
+) -> Result<DocHandle, anyhow::Error> {
+    let doc_id = samod::DocumentId::from_str(doc_id).unwrap();
+    let proto = iroh_repo_protocol.lock().await;
+    proto
+        .repo()
+        .find(doc_id)
+        .await?
+        .context("Couldn't find document with this ID")
+}
+
+pub fn print_document(doc: &DocHandle) {
+    println!("Document ID: {}", doc.document_id());
+    doc.with_document(|doc| {
+        for key in doc.keys(automerge::ROOT) {
+            let (value, _) = doc
+                .get(automerge::ROOT, &key)
+                .unwrap()
+                .expect("missing value");
+            println!("{key}={value}");
+        }
+        anyhow::Ok(())
+    })
+    .unwrap();
+}
+
+pub fn vec3_to_string(vec: &Vec3) -> String {
+    format!("{},{},{}", vec.x, vec.y, vec.z)
+}
+
+pub fn string_to_vec3(s: &str) -> Vec3 {
+    let mut parts = s.split(',');
+    let x = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    let y = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    let z = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+    Vec3::new(x, y, z)
+}
+
+pub fn get_players(doc: &DocHandle) -> Vec<Vec3> {
+    let mut players = Vec::new();
+    doc.with_document(|doc| {
+        for key in doc.keys(automerge::ROOT) {
+            let (value, _) = doc
+                .get(automerge::ROOT, &key)
+                .unwrap()
+                .expect("missing value");
+            if key.starts_with("player_") {
+                let value_s = value.into_string().unwrap();
+                let vec3 = string_to_vec3(&value_s);
+                players.push(vec3);
+            }
+        }
+        anyhow::Ok(())
+    })
+    .unwrap();
+    players
+}
+
+pub type RouterContainer = Arc<std::sync::Mutex<iroh::protocol::Router>>;
+pub type ProtocolContainer = Arc<tokio::sync::Mutex<IrohRepo>>;
 pub trait TestAppHandler: winit::application::ApplicationHandler {
     fn new(
         event_loop: &winit::event_loop::ActiveEventLoop,
         window: Arc<winit::window::Window>,
         ctx: &Context,
+        router: RouterContainer,
+        iroh_repo_protocol: ProtocolContainer,
+        document_id: String,
     ) -> Self;
     fn render(&mut self, ctx: &Context);
 }
@@ -35,6 +103,9 @@ pub(crate) struct InnerTestApp<T> {
 pub struct TestApp<T> {
     size: winit::dpi::Size,
     inner: Option<InnerTestApp<T>>,
+    router: RouterContainer,
+    iroh_repo_protocol: ProtocolContainer,
+    document_id: String,
 }
 
 impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
@@ -69,12 +140,21 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                         .with_fullscreen(
                             maybe_lowest_monitor
                                 .map(|m| winit::window::Fullscreen::Borderless(Some(m))),
-                        ),
+                        )
+                        // make this false so tokio can run
+                        .with_drag_and_drop(false),
                 )
                 .unwrap(),
         );
         let ctx = Context::try_from_window(None, window.clone()).unwrap();
-        let mut app = T::new(event_loop, window, &ctx);
+        let mut app = T::new(
+            event_loop,
+            window,
+            &ctx,
+            self.router.clone(),
+            self.iroh_repo_protocol.clone(),
+            self.document_id.clone(),
+        );
         app.resumed(event_loop);
         self.inner = Some(InnerTestApp { app, ctx });
     }
@@ -100,6 +180,9 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
                         },
                     ..
                 } => {
+                    block_on(async {
+                        self.router.try_lock().unwrap().shutdown().await.unwrap();
+                    });
                     event_loop.exit();
                 }
                 _ => {
@@ -129,10 +212,18 @@ impl<T: TestAppHandler> winit::application::ApplicationHandler for TestApp<T> {
 }
 
 impl<T: TestAppHandler> TestApp<T> {
-    pub fn new(size: impl Into<winit::dpi::Size>) -> Self {
+    pub fn new(
+        size: impl Into<winit::dpi::Size>,
+        router: RouterContainer,
+        iroh_repo_protocol: ProtocolContainer,
+        document_id: String,
+    ) -> Self {
         TestApp {
             size: size.into(),
             inner: None,
+            router,
+            iroh_repo_protocol,
+            document_id,
         }
     }
 
